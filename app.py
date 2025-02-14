@@ -60,6 +60,7 @@ def load_data():
     afficher_buffer_routier = st.sidebar.checkbox("Afficher le réseau des axes routiers", False)
     buffer_distance_urban = st.sidebar.slider("Rayon autour du centre-ville (km)", 1, 40, 5) / 111 # Conversion km -> degrés
     buffer_distance_network = st.sidebar.slider("Rayon autour du réseau HTA (m)", 15, 1000, 100) / 111000  # Conversion m -> degrés
+    slider_display_parcelles = st.sidebar.slider("Nombre de parcelles à afficher en pourcentage", 1, 100, 60)
 
     buffer_distance_axes = st.sidebar.slider("Rayon autour de l'axe routier (m)", 15, 1000, 50) / 111000  # Conversion m -> degrés
 
@@ -124,6 +125,8 @@ def load_data():
 
             gdf_parcelles["nom_proprietaire"] = gdf_parcelles["id"].map(data_proprietaires)               
 
+            gdf_parcelles = gdf_parcelles.sample(frac=1, random_state=42).reset_index(drop=True)
+
         # Création d'un buffer autour du centre urbain
         centre_urbain = Point(center_lon, center_lat)
         buffer_zone_urban = centre_urbain.buffer(buffer_distance_urban) if afficher_buffer_urban else None
@@ -161,7 +164,7 @@ def load_data():
             gdf_parcelles = gdf_parcelles[gdf_parcelles.intersects(buffer_zone_axes)]
 
         # Afficher dynamiquement le nombre de parcelles après filtrage
-        st.write(f"Nombre de parcelles après filtrage : {len(gdf_parcelles)}")
+        st.write(f"Nombre de parcelles après filtrage : {int(len(gdf_parcelles) * (slider_display_parcelles / 100))}")
         if gdf_parcelles.empty:
             st.warning("Aucune parcelle trouvée après filtrage.")
 
@@ -197,7 +200,7 @@ def load_data():
 
         # 4. Ajouter les parcelles avec un popup interactif (cette couche est ajoutée après, pour être au-dessus)
         folium.GeoJson(
-            gdf_parcelles,
+            gdf_parcelles[:int(len(gdf_parcelles) * (slider_display_parcelles / 100))],
             style_function=lambda x: {"color": "blue", "weight": 1.5, "fillOpacity": 0.2},
             tooltip=folium.GeoJsonTooltip(fields=["contenance"], aliases=["Contenance (m²):"]),
             popup=folium.GeoJsonPopup(fields=parcel_fields)
@@ -208,7 +211,6 @@ def load_data():
 
     else:
         st.error("Aucune donnée de parcelles ou de réseau HTA disponible.")
-
 
 def main():
     st.set_page_config(page_title="PowerCharge - Carte des Hubs", layout="wide")
@@ -241,7 +243,6 @@ def main():
     
     # Chargement des données
     data = load_data()
-
     
     if "validated_criteria" not in st.session_state:
         st.session_state["validated_criteria"] = {
