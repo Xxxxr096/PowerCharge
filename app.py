@@ -212,23 +212,23 @@ def main():
     if "temp_criteria" not in st.session_state:
         st.session_state["temp_criteria"] = st.session_state["validated_criteria"].copy()
     
-    st.sidebar.header("🔧 Filtres de sélection")
-    st.session_state["temp_criteria"]["prox_reseau_ht"] = st.sidebar.slider("⚡ Proximité Réseau HT (km)", 0.5, 10.0, st.session_state["temp_criteria"]["prox_reseau_ht"])
-    st.session_state["temp_criteria"]["prox_routier"] = st.sidebar.slider("🛣️ Proximité Axe Routier Principal (km)", 1.0, 10.0, st.session_state["temp_criteria"]["prox_routier"])
-    st.session_state["temp_criteria"]["prox_urbain"] = st.sidebar.slider("🏙️ Proximité Centre Urbain (km)", 5.0, 40.0, st.session_state["temp_criteria"]["prox_urbain"])
+    # st.sidebar.header("🔧 Filtres de sélection")
+    # st.session_state["temp_criteria"]["prox_reseau_ht"] = st.sidebar.slider("⚡ Proximité Réseau HT (km)", 0.5, 10.0, st.session_state["temp_criteria"]["prox_reseau_ht"])
+    # st.session_state["temp_criteria"]["prox_routier"] = st.sidebar.slider("🛣️ Proximité Axe Routier Principal (km)", 1.0, 10.0, st.session_state["temp_criteria"]["prox_routier"])
+    # st.session_state["temp_criteria"]["prox_urbain"] = st.sidebar.slider("🏙️ Proximité Centre Urbain (km)", 5.0, 40.0, st.session_state["temp_criteria"]["prox_urbain"])
     
-    st.session_state["temp_criteria"]["afficher_routes"] = st.sidebar.checkbox("Afficher les routes", st.session_state["temp_criteria"]["afficher_routes"])
-    st.session_state["temp_criteria"]["afficher_reseaux"] = st.sidebar.checkbox("Afficher les réseaux électriques", st.session_state["temp_criteria"]["afficher_reseaux"])
+    # st.session_state["temp_criteria"]["afficher_routes"] = st.sidebar.checkbox("Afficher les routes", st.session_state["temp_criteria"]["afficher_routes"])
+    # st.session_state["temp_criteria"]["afficher_reseaux"] = st.sidebar.checkbox("Afficher les réseaux électriques", st.session_state["temp_criteria"]["afficher_reseaux"])
     
-    if st.sidebar.button("Valider les critères"):
-        st.session_state["validated_criteria"] = st.session_state["temp_criteria"].copy()
+    # if st.sidebar.button("Valider les critères"):
+    #     st.session_state["validated_criteria"] = st.session_state["temp_criteria"].copy()
     
     st.write(f"**Critères appliqués :** Réseau HT {st.session_state['validated_criteria']['prox_reseau_ht']} km, Routes {st.session_state['validated_criteria']['prox_routier']} km, Urbain {st.session_state['validated_criteria']['prox_urbain']} km")
     
-    if st.session_state['validated_criteria']['afficher_routes']:
-        st.write("🛣️ Routes affichées sur la carte.")
-    if st.session_state['validated_criteria']['afficher_reseaux']:
-        st.write("⚡ Réseaux électriques affichés sur la carte.")
+    # if st.session_state['validated_criteria']['afficher_routes']:
+    #     st.write("🛣️ Routes affichées sur la carte.")
+    # if st.session_state['validated_criteria']['afficher_reseaux']:
+    #     st.write("⚡ Réseaux électriques affichés sur la carte.")
     
     # map_object = create_map(data)
     # folium_static(map_object)
