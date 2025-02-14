@@ -11,6 +11,8 @@ import streamlit as st
 from io import BytesIO
 from shapely.geometry import mapping, box, Point, MultiPolygon, LineString
 from typing import Optional, Tuple
+import os
+from shapely.ops import unary_union
 
 def load_data():
     # Charger les données des 20 plus grandes agglomérations
@@ -47,10 +49,19 @@ def load_data():
     parcelles_url = "https://cadastre.data.gouv.fr/bundler/cadastre-etalab/communes/59350/geojson/parcelles"
     reseau_url = f"https://data.enedis.fr/api/records/1.0/download/?rows=1000&format=json&geo_simplify=true&geo_simplify_zoom=12&geofilter.bbox={min_lat},{min_lon},{max_lat},{max_lon}&fields=geo_shape&dataset=reseau-souterrain-hta"
 
+    # Fichier local pour l'axe routier (existe localement)
+    axes_file = r"axes_lille_converted.geojson"
+
     # Interface Streamlit pour ajuster les buffers
     st.sidebar.header("Réglages des Buffers")
-    buffer_distance_urban = st.sidebar.slider("Rayon autour du centre-ville (km)", 1, 40, 5) / 111  # Conversion km -> degrés
+    
+    afficher_buffer_urban = st.sidebar.checkbox("Afficher le rayon autour du centre-ville", True)
+    afficher_buffer_network = st.sidebar.checkbox("Afficher le réseau HTA", False)
+    afficher_buffer_routier = st.sidebar.checkbox("Afficher le réseau des axes routiers", False)
+    buffer_distance_urban = st.sidebar.slider("Rayon autour du centre-ville (km)", 1, 40, 5) / 111 # Conversion km -> degrés
     buffer_distance_network = st.sidebar.slider("Rayon autour du réseau HTA (m)", 15, 1000, 100) / 111000  # Conversion m -> degrés
+
+    buffer_distance_axes = st.sidebar.slider("Rayon autour de l'axe routier (m)", 15, 1000, 50) / 111000  # Conversion m -> degrés
 
     # Télécharger les parcelles cadastrales
     response_parcelles = requests.get(parcelles_url)
@@ -68,6 +79,23 @@ def load_data():
         st.error("Échec du téléchargement du réseau électrique")
         data_reseau = None
 
+    # Charger l'axe routier depuis le fichier local
+    lines_axes = []
+    if os.path.exists(axes_file):
+        try:
+            gdf_axes_tmp = gpd.read_file(axes_file)
+            for geom in gdf_axes_tmp.geometry:
+                if geom.type == "LineString":
+                    lines_axes.append(LineString(geom.coords))
+                elif geom.type == "MultiLineString":
+                    for sub in geom.geoms:
+                        lines_axes.append(LineString(sub.coords))
+            logging.info(f"{len(lines_axes)} segments d'axe routier lus depuis {axes_file}")
+        except Exception as e:
+            st.warning(f"Impossible de lire {axes_file} : {e}")
+    else:
+        st.warning(f"Fichier {axes_file} introuvable.")
+
     # Vérification des données et filtrage des parcelles
     if gdf_parcelles is not None and not gdf_parcelles.empty:
         # Filtrer sur la contenance si la colonne est présente
@@ -80,9 +108,25 @@ def load_data():
             if col in gdf_parcelles.columns:
                 gdf_parcelles[col] = gdf_parcelles[col].astype(str)
 
+        # Ajout nom proprietaires 
+        with open("proprietaires_restructured.json", "r", encoding="utf-8") as f:
+            data_proprietaires = json.load(f)
+            # data_proprietaires_restructured = {}
+
+            # for proprietaire, values in data_proprietaires["proprietaires"].items():
+            #     for par_id in values["parcelles"]:
+            #         data_proprietaires_restructured[par_id] = values["owner_name"]
+
+            # with open("proprietaires_restructured.json", "w", encoding="utf-8") as f2:
+            #     json.dump(data_proprietaires_restructured, f2, ensure_ascii=False, indent=2)
+            
+            gdf_parcelles = gdf_parcelles[gdf_parcelles["id"].isin(data_proprietaires.keys())]
+
+            gdf_parcelles["nom_proprietaire"] = gdf_parcelles["id"].map(data_proprietaires)               
+
         # Création d'un buffer autour du centre urbain
         centre_urbain = Point(center_lon, center_lat)
-        buffer_zone_urban = centre_urbain.buffer(buffer_distance_urban)
+        buffer_zone_urban = centre_urbain.buffer(buffer_distance_urban) if afficher_buffer_urban else None
 
         # Création du buffer autour du réseau électrique
         network_buffers = []
@@ -95,17 +139,26 @@ def load_data():
                         line = LineString(coords)
                         network_buffers.append(line.buffer(buffer_distance_network))
 
-        if network_buffers:
+        if network_buffers and afficher_buffer_network:
             buffer_zone_network = network_buffers[0]
             for buff in network_buffers[1:]:
                 buffer_zone_network = buffer_zone_network.union(buff)
         else:
             buffer_zone_network = None
 
+        # Buffer axe routier distinct
+        buffer_zone_axes = None
+        if lines_axes and afficher_buffer_routier:
+            multi_axes = unary_union(lines_axes)
+            buffer_zone_axes = multi_axes.buffer(buffer_distance_axes)
+
         # Filtrer les parcelles en fonction des buffers
-        gdf_parcelles = gdf_parcelles[gdf_parcelles.intersects(buffer_zone_urban)]
-        if buffer_zone_network:
+        if afficher_buffer_urban and buffer_zone_urban:
+            gdf_parcelles = gdf_parcelles[gdf_parcelles.intersects(buffer_zone_urban)]
+        if buffer_zone_network and afficher_buffer_urban:
             gdf_parcelles = gdf_parcelles[gdf_parcelles.intersects(buffer_zone_network)]
+        if buffer_zone_axes and afficher_buffer_routier:
+            gdf_parcelles = gdf_parcelles[gdf_parcelles.intersects(buffer_zone_axes)]
 
         # Afficher dynamiquement le nombre de parcelles après filtrage
         st.write(f"Nombre de parcelles après filtrage : {len(gdf_parcelles)}")
@@ -116,20 +169,28 @@ def load_data():
         m = folium.Map(location=[center_lat, center_lon], zoom_start=12)
 
         # 1. Ajouter la bounding box avec interactivité désactivée
-        folium.GeoJson(
-            mapping(box(min_lon, min_lat, max_lon, max_lat)),
-            style_function=lambda x: {"color": "red", "weight": 2, "fillOpacity": 0.1},
-            tooltip="Bounding Box de la ville",
-            interactive=False  # Empêche cette couche d'intercepter les clics
-        ).add_to(m)
+        if afficher_buffer_urban and buffer_zone_urban:
+            folium.GeoJson(
+                mapping(box(min_lon, min_lat, max_lon, max_lat)),
+                style_function=lambda x: {"color": "red", "weight": 2, "fillOpacity": 0.1},
+                tooltip="Bounding Box de la ville",
+                interactive=False  # Empêche cette couche d'intercepter les clics
+            ).add_to(m)
 
         # 2. Ajouter le réseau HTA
-        for record in data_reseau:
-            if "fields" in record and "geo_shape" in record["fields"]:
-                geo_data = record["fields"]["geo_shape"]
-                if geo_data["type"] == "LineString":
-                    line_coords = [(lat, lon) for lon, lat in geo_data["coordinates"]]
-                    folium.PolyLine(line_coords, color="red", weight=2.5, opacity=1, tooltip="Réseau HTA").add_to(m)
+        if afficher_buffer_network and data_reseau:
+            for record in data_reseau:
+                if "fields" in record and "geo_shape" in record["fields"]:
+                    geo_data = record["fields"]["geo_shape"]
+                    if geo_data["type"] == "LineString":
+                        line_coords = [(lat, lon) for lon, lat in geo_data["coordinates"]]
+                        folium.PolyLine(line_coords, color="red", weight=2.5, opacity=1, tooltip="Réseau HTA").add_to(m)
+
+        # 3. Afficher l'axe routier en vert
+        if afficher_buffer_routier and lines_axes:
+            for line in lines_axes:
+                line_coords = [(coord[1], coord[0]) for coord in line.coords]
+                folium.PolyLine(line_coords, color="green", weight=2, opacity=1, tooltip="Axe routier").add_to(m)
 
         # 3. Préparer la liste des champs à afficher dans le popup (on exclut la géométrie)
         parcel_fields = [col for col in gdf_parcelles.columns if col != 'geometry']
@@ -148,19 +209,6 @@ def load_data():
     else:
         st.error("Aucune donnée de parcelles ou de réseau HTA disponible.")
 
-# def create_map(data):
-#     # Création de la carte
-#     m = folium.Map(location=[46.603354, 1.888334], zoom_start=6)
-    
-#     # Ajouter des marqueurs pour chaque ville
-#     for i, row in data.iterrows():
-#         folium.Marker(
-#             location=[row["Lat"], row["Lon"]],
-#             popup=row["Ville"],
-#             icon=folium.Icon(color="blue", icon="info-sign")
-#         ).add_to(m)
-    
-#     return m
 
 def main():
     st.set_page_config(page_title="PowerCharge - Carte des Hubs", layout="wide")
@@ -194,11 +242,6 @@ def main():
     # Chargement des données
     data = load_data()
 
-    # Sélection des 5 meilleurs emplacements (exemple aléatoire)
-    # top5_locations = data.sample(5).reset_index(drop=True)
-    
-    # st.write("### 🏆 Top 5 des meilleurs lieux d'implantation")
-    # st.dataframe(top5_locations)
     
     if "validated_criteria" not in st.session_state:
         st.session_state["validated_criteria"] = {
@@ -212,26 +255,7 @@ def main():
     if "temp_criteria" not in st.session_state:
         st.session_state["temp_criteria"] = st.session_state["validated_criteria"].copy()
     
-    # st.sidebar.header("🔧 Filtres de sélection")
-    # st.session_state["temp_criteria"]["prox_reseau_ht"] = st.sidebar.slider("⚡ Proximité Réseau HT (km)", 0.5, 10.0, st.session_state["temp_criteria"]["prox_reseau_ht"])
-    # st.session_state["temp_criteria"]["prox_routier"] = st.sidebar.slider("🛣️ Proximité Axe Routier Principal (km)", 1.0, 10.0, st.session_state["temp_criteria"]["prox_routier"])
-    # st.session_state["temp_criteria"]["prox_urbain"] = st.sidebar.slider("🏙️ Proximité Centre Urbain (km)", 5.0, 40.0, st.session_state["temp_criteria"]["prox_urbain"])
-    
-    # st.session_state["temp_criteria"]["afficher_routes"] = st.sidebar.checkbox("Afficher les routes", st.session_state["temp_criteria"]["afficher_routes"])
-    # st.session_state["temp_criteria"]["afficher_reseaux"] = st.sidebar.checkbox("Afficher les réseaux électriques", st.session_state["temp_criteria"]["afficher_reseaux"])
-    
-    # if st.sidebar.button("Valider les critères"):
-    #     st.session_state["validated_criteria"] = st.session_state["temp_criteria"].copy()
-    
     st.write(f"**Critères appliqués :** Réseau HT {st.session_state['validated_criteria']['prox_reseau_ht']} km, Routes {st.session_state['validated_criteria']['prox_routier']} km, Urbain {st.session_state['validated_criteria']['prox_urbain']} km")
-    
-    # if st.session_state['validated_criteria']['afficher_routes']:
-    #     st.write("🛣️ Routes affichées sur la carte.")
-    # if st.session_state['validated_criteria']['afficher_reseaux']:
-    #     st.write("⚡ Réseaux électriques affichés sur la carte.")
-    
-    # map_object = create_map(data)
-    # folium_static(map_object)
     
 if __name__ == "__main__":
     main()
